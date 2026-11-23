@@ -98,8 +98,9 @@ h2 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -.01em; }
   transition: border-color .15s, background .15s;
   -webkit-tap-highlight-color: transparent;
 }
-.name:hover { border-color: var(--primary); }
-.name:active { background: var(--soft); }
+.name:hover:not(:disabled) { border-color: var(--primary); }
+.name:active:not(:disabled) { background: var(--soft); }
+.name:disabled { opacity: 0.55; cursor: not-allowed; }
 .name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .drawn {
   flex: none;
@@ -340,3 +341,19 @@ button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 }
 .confetti.on { visibility: visible; }
 .confetti svg { display: block; }
+
+/* Email field */
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label { font-weight: 600; font-size: 15px; }
+.field input {
+  min-height: 48px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font: inherit;
+  font-size: 16px;
+  background: transparent;
+  color: inherit;
+}
+.field input:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; border-color: var(--primary); }
+.field .hint { margin: 0; font-size: 13px; }

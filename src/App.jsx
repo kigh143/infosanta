@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EXCHANGE, firstName } from "./people";
 import { subscribePeople, subscribeDraw, drawPerson } from "./db";
-import { saveMatch, loadMatch } from "./localMatch";
+import { sendResult, emailConfigured, isEmail } from "./email";
 import { sleep } from "./draw";
 import { reduceMotion } from "./motion";
 import Confetti from "./Confetti";
@@ -28,6 +28,8 @@ export default function App() {
   const [spinning, setSpinning] = useState(false);
   const [opened, setOpened] = useState(false);
   const [revealed, setRevealed] = useState(false);
+  const [email, setEmail] = useState("");
+  const [emailStatus, setEmailStatus] = useState(""); // sending | sent | failed
   const runId = useRef(0);
   const confetti = useRef(null);
 
@@ -44,8 +46,6 @@ export default function App() {
   const connected = people !== null && drawState !== null;
   const me = selected ? byId[selected] : null;
   const myFirst = firstName(me?.name);
-  const savedMatch = me ? loadMatch(me.id) : "";
-  const drewElsewhere = !!me && drawn.has(me.id) && !savedMatch;
 
   // If the selected person is removed from the list, go back to the start.
   useEffect(() => {
@@ -53,6 +53,7 @@ export default function App() {
   }, [people]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function choose(id) {
+    if (drawn.has(id)) return;
     setSelected(id);
     setError("");
     setStep("confirm");
@@ -68,12 +69,14 @@ export default function App() {
     setOpened(false);
     setRevealed(false);
     setError("");
+    setEmail("");
+    setEmailStatus("");
   }
 
-  // Wiggle the sealed envelope (first draw only), then open it and let the card slide out.
-  async function openEnvelope(name, run, quick) {
+  // Wiggle the sealed envelope, then open it and let the card slide out.
+  async function openEnvelope(name, run) {
     const motion = !reduceMotion();
-    if (motion && !quick) {
+    if (motion) {
       setSpinning(true);
       await sleep(1400);
       setSpinning(false);
@@ -81,30 +84,31 @@ export default function App() {
     if (runId.current !== run) return;
     setMatch(name);
     setOpened(true);
-    if (motion) await sleep(quick ? 1300 : 1600);
+    if (motion) await sleep(1600);
   }
 
   async function draw() {
     if (!selected || busy || !connected) return;
+    if (!isEmail(email)) { setError("Enter a valid email address."); return; }
     const run = ++runId.current;
     setBusy(true);
     setError("");
-    const again = drawn.has(selected);
     try {
-      let name;
-      if (again) {
-        name = loadMatch(selected);
-        if (!name) throw new Error("elsewhere");
-      } else {
-        const receiver = await drawPerson(selected, list);
-        name = byId[receiver]?.name || receiver;
-        saveMatch(selected, name);
-      }
+      const receiver = await drawPerson(selected, list);
+      const name = byId[receiver]?.name || receiver;
+      // Send in the background while the envelope opens. Nothing is saved anywhere.
+      setEmailStatus("sending");
+      sendResult({ to: email, giver: me.name, match: name })
+        .then(() => runId.current === run && setEmailStatus("sent"))
+        .catch((err) => {
+          console.error("EmailJS send failed:", err?.status, err?.text || err);
+          if (runId.current === run) setEmailStatus("failed");
+        });
       setOpened(false);
       setRevealed(false);
       setMatch("");
       setStep("result");
-      await openEnvelope(name, run, again);
+      await openEnvelope(name, run);
       if (runId.current === run) {
         setRevealed(true);
         confetti.current?.fire();
@@ -113,7 +117,6 @@ export default function App() {
       const messages = {
         busy: "Lots of people are drawing right now. Try again in a few seconds.",
         already: "This name has already drawn.",
-        elsewhere: "You drew on another device. Your person is only remembered there.",
         stuck: "There's no one left to draw. Ask the organiser to reset the draw.",
         "too-few": "At least two people need to be on the list before anyone can draw.",
       };
@@ -135,7 +138,7 @@ export default function App() {
     <main className="page">
       <Confetti ref={confetti} />
       <header className="head">
-        <p className="brand">Infoconsults</p>
+        <p className="brand">Info Consults </p>
         <h1>Secret Santa <span className="accent">2026</span></h1>
         <p className="meta">Gift exchange Thu 17 Dec · {countdownText()}</p>
       </header>
@@ -150,7 +153,13 @@ export default function App() {
           <ul className="names" role="list">
             {list.map((p) => (
               <li key={p.id}>
-                <button type="button" className="name" onClick={() => choose(p.id)}>
+                <button
+                  type="button"
+                  className="name"
+                  onClick={() => choose(p.id)}
+                  disabled={drawn.has(p.id)}
+                  aria-disabled={drawn.has(p.id)}
+                >
                   <span className="name-text">{p.name}</span>
                   {drawn.has(p.id) && <span className="drawn">Drawn</span>}
                 </button>
@@ -163,25 +172,32 @@ export default function App() {
       {step === "confirm" && me && (
         <section className="panel" aria-labelledby="confirm-title">
           <h2 id="confirm-title">Hi, {myFirst}</h2>
-          <p className="muted">
-            {drewElsewhere
-              ? "You've already drawn, but not on this device. We don't keep a record of who got whom, so your person can only be shown on the device you drew on."
-              : drawn.has(selected)
-                ? "You've already drawn. Tap below to see your person again."
-                : "You'll draw one colleague. Once drawn, it's locked."}
-          </p>
-          {!drewElsewhere && <div className="secret" role="note">
+          <p className="muted">You'll draw one colleague. Once drawn, it's locked, and you can't open it again here.</p>
+          <div className="field">
+            <label htmlFor="email">Where should we email your person?</label>
+            <input
+              id="email"
+              type="email"
+              inputMode="email"
+              autoComplete="email"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => { setEmail(e.target.value); setError(""); }}
+              onKeyDown={(e) => e.key === "Enter" && draw()}
+            />
+            <p className="muted hint">Only used to send this one email. It isn't saved.</p>
+          </div>
+          {!emailConfigured && <p className="error">Email sending isn't set up yet. Ask the organiser.</p>}
+          <div className="secret" role="note">
             <span className="secret-icon" aria-hidden="true">🤫</span>
             <div>
               <p className="secret-title">Do this in secret</p>
               <p>Make sure nobody can see your screen before you tap the button. The surprise only works if your person stays a secret.</p>
             </div>
-          </div>}
-          {!drewElsewhere && (
-            <button className="btn" onClick={draw} disabled={busy || !connected}>
-              {busy ? "Drawing…" : drawn.has(selected) ? "Show my person" : "Draw my person"}
-            </button>
-          )}
+          </div>
+          <button className="btn" onClick={draw} disabled={busy || !connected || !emailConfigured || !isEmail(email)}>
+            {busy ? "Drawing…" : "Draw my person"}
+          </button>
           {error && <p className="error" role="alert">{error}</p>}
           <button className="link" onClick={reset}>Not {myFirst}? Choose again</button>
         </section>
@@ -213,10 +229,15 @@ export default function App() {
           {!opened && <p className="muted center">{spinning ? "Drawing your person…" : "Opening…"}</p>}
           {revealed && (
             <>
-              <p className="muted">
-                Keep it to yourself until 17 December. Nobody keeps a record of who got whom, so write it down.
-                You can see it again on this device by picking your name.
-              </p>
+              {emailStatus === "sending" && <p className="muted">Sending it to {email.trim()}…</p>}
+              {emailStatus === "sent" && (
+                <p className="muted">We've emailed it to <strong>{email.trim()}</strong>. Keep it to yourself until 17 December.</p>
+              )}
+              {emailStatus === "failed" && (
+                <p className="error" role="alert">
+                  We couldn't send the email. Write your person down now: it isn't saved anywhere and you can't open it again.
+                </p>
+              )}
               <div className="note">
                 <p className="note-title">Keep it simple</p>
                 <p>

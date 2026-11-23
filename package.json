@@ -13,6 +13,7 @@
     "rules:deploy": "firebase deploy --only database"
   },
   "dependencies": {
+    "@emailjs/browser": "^5.0.3",
     "firebase": "^13.4.0",
     "lottie-web": "^5.13.0",
     "react": "^19.3.1",
