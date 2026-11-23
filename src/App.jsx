@@ -3,228 +3,191 @@ import { PEOPLE, byId, EXCHANGE, firstName } from "./people";
 import { subscribeDrawn, getPairs, markDrawn } from "./db";
 import { sleep } from "./draw";
 import { reduceMotion } from "./motion";
-import Snow from "./components/Snow";
-import Confetti from "./components/Confetti";
 
 function countdownText() {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const days = Math.round((EXCHANGE - today) / 86400000);
   if (days > 1) return `${days} days to go`;
-  if (days === 1) return "Tomorrow!";
-  if (days === 0) return "It's today!";
-  return "Exchange done";
+  if (days === 1) return "Tomorrow";
+  if (days === 0) return "Today";
+  return "Done";
 }
 
 export default function App() {
   const [connected, setConnected] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [drawn, setDrawn] = useState(() => new Set());
   const [selected, setSelected] = useState(null);
+  const [step, setStep] = useState("pick"); // pick | confirm | result
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState({ msg: "", err: false });
-  const [progressLabel, setProgressLabel] = useState("Loading draws…");
-
-  // result view
-  const [view, setView] = useState("pick");
-  const [tagFrom, setTagFrom] = useState("");
-  const [tagTo, setTagTo] = useState("…");
+  const [error, setError] = useState("");
+  const [match, setMatch] = useState("");
   const [spinning, setSpinning] = useState(false);
-  const [landKey, setLandKey] = useState(0); // bump to replay the "landed" pop
-  const [keepVisible, setKeepVisible] = useState(false);
-  const [idle, setIdle] = useState(false);
-
-  // dots that just turned on get a pop animation
-  const prevCount = useRef(0);
-  const [popFrom, setPopFrom] = useState(0);
-
-  const tagRef = useRef(null);
-  const confettiRef = useRef(null);
+  const [revealed, setRevealed] = useState(false);
   const runId = useRef(0);
 
-  // Subscribe to who has drawn.
   useEffect(() => {
-    let loaded = false;
-    const timer = setTimeout(() => { if (!loaded) setProgressLabel("Still connecting to the draw…"); }, 10000);
     const unsub = subscribeDrawn(
       (raw) => {
-        const next = new Set([...raw].filter((id) => byId[id]));
-        loaded = true;
-        clearTimeout(timer);
+        setDrawn(new Set([...raw].filter((id) => byId[id])));
         setConnected(true);
-        setPopFrom(prevCount.current > 0 ? prevCount.current : next.size);
-        prevCount.current = next.size;
-        setDrawn(next);
-        setProgressLabel(`${next.size} of ${PEOPLE.length} have drawn`);
+        setLoadError(false);
       },
-      () => {
-        clearTimeout(timer);
-        setProgressLabel("Couldn't load who has drawn");
-        setStatus({ msg: "Couldn't connect to the draw. Refresh the page to try again.", err: true });
-      }
+      () => setLoadError(true)
     );
-    return () => { clearTimeout(timer); unsub(); };
+    return unsub;
   }, []);
+
+  function choose(id) {
+    setSelected(id);
+    setError("");
+    setStep("confirm");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function reset() {
+    runId.current++;
+    setSelected(null);
+    setStep("pick");
+    setMatch("");
+    setSpinning(false);
+    setRevealed(false);
+    setError("");
+  }
 
   async function shuffleTo(finalName, run) {
     if (!reduceMotion()) {
       setSpinning(true);
       const others = PEOPLE.filter((p) => p.id !== selected);
-      const end = performance.now() + 1700;
-      let delay = 55;
+      const end = performance.now() + 1500;
+      let delay = 50;
       while (performance.now() < end) {
         if (runId.current !== run) return;
-        setTagTo(others[Math.floor(Math.random() * others.length)].name);
+        setMatch(others[Math.floor(Math.random() * others.length)].name);
         await sleep(delay);
-        delay = Math.min(delay * 1.08, 220);
+        delay = Math.min(delay * 1.1, 200);
       }
       setSpinning(false);
     }
     if (runId.current !== run) return;
-    setTagTo(finalName);
-    setLandKey((k) => k + 1);
-    requestAnimationFrame(() => confettiRef.current?.burst(tagRef.current));
+    setMatch(finalName);
   }
 
-  async function handleDraw() {
+  async function draw() {
     if (!selected || busy || !connected) return;
     const run = ++runId.current;
     setBusy(true);
-    setStatus({ msg: "Drawing…", err: false });
-    const me = byId[selected];
+    setError("");
     const again = drawn.has(selected);
     try {
       const pairs = await getPairs();
-      const match = byId[pairs[me.id]];
-      setTagFrom(`To ${firstName(me.id)},`);
-      setTagTo("…");
-      setKeepVisible(false);
-      setView("result");
-      setStatus({ msg: "", err: false });
-      if (!again) {
-        try { await markDrawn(me.id); } catch { /* already marked, or offline: non-fatal */ }
-        await shuffleTo(match.name, run);
+      const name = byId[pairs[selected]].name;
+      setRevealed(false);
+      setStep("result");
+      if (again) {
+        setMatch(name);
       } else {
-        setTagTo(match.name);
-        setLandKey((k) => k + 1);
+        try { await markDrawn(selected); } catch { /* already marked or offline */ }
+        await shuffleTo(name, run);
       }
-      if (runId.current !== run) return;
-      setKeepVisible(true);
-      setIdle(true);
+      if (runId.current === run) setRevealed(true);
     } catch (e) {
-      setStatus({
-        msg: e?.message === "busy"
-          ? "Someone else is drawing right now. Wait a few seconds and try again."
-          : "Couldn't reach the draw. Check your connection and try again.",
-        err: true,
-      });
+      setError(
+        e?.message === "busy"
+          ? "Someone else is drawing right now. Try again in a few seconds."
+          : "Couldn't reach the draw. Check your connection and try again."
+      );
     } finally {
       setBusy(false);
     }
   }
 
-  function handleBack() {
-    runId.current++;
-    setIdle(false);
-    setSpinning(false);
-    setSelected(null);
-    setView("pick");
-    setLandKey(0);
-    window.scrollTo(0, 0);
-  }
-
-  let drawLabel = "Pick your name first";
-  if (selected) {
-    const first = firstName(selected);
-    drawLabel = drawn.has(selected) ? `Show my match again, ${first}` : `I'm ${first}, draw my person`;
-  }
-  const drawDisabled = !selected || busy || !connected;
+  const pct = Math.round((drawn.size / PEOPLE.length) * 100);
+  const progressText = loadError
+    ? "Couldn't load the draw"
+    : connected
+      ? `${drawn.size} of ${PEOPLE.length} have drawn`
+      : "Connecting…";
 
   return (
-    <>
-      <Snow />
-      <Confetti ref={confettiRef} />
-      <div className="ribbon" aria-hidden="true" />
-      <div className="wrap">
-        <header>
-          <div className="bulbs" aria-hidden="true">
-            {Array.from({ length: 10 }, (_, i) => <i key={i} />)}
-          </div>
-          <div className="eyebrow">Infoconsults · Office gift exchange</div>
-          <h1>Secret <em>Santa</em> 2026</h1>
-          <div className="meta">
-            <span className="chip">Gift exchange <b>Thu 17 Dec 2026</b></span>
-            <span className="chip">{countdownText()}</span>
-          </div>
-        </header>
+    <main className="page">
+      <header className="head">
+        <p className="brand">Infoconsults</p>
+        <h1>Secret Santa <span className="accent">2026</span></h1>
+        <p className="meta">Gift exchange Thu 17 Dec · {countdownText()}</p>
+      </header>
 
-        {/* Step 1: pick your name */}
-        <section className="card" hidden={view !== "pick"}>
-          <div>
-            <h2>Who are you?</h2>
-            <p className="hint">Tap your own name. Please don't pick a colleague's name, or you'll spoil their surprise.</p>
-          </div>
-          <div className="names" role="group" aria-label="Team members">
+      {step === "pick" && (
+        <section className="panel" aria-labelledby="pick-title">
+          <h2 id="pick-title">Who are you?</h2>
+          <p className="muted">Tap your own name. Picking someone else's spoils their surprise.</p>
+          <ul className="names" role="list">
             {PEOPLE.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                className="name"
-                aria-pressed={selected === p.id}
-                onClick={() => setSelected(p.id)}
-              >
-                <span>{p.name}</span>
-                {drawn.has(p.id) && <span className="done">DRAWN</span>}
-              </button>
+              <li key={p.id}>
+                <button type="button" className="name" onClick={() => choose(p.id)}>
+                  <span className="name-text">{p.name}</span>
+                  {drawn.has(p.id) && <span className="drawn">Drawn</span>}
+                </button>
+              </li>
             ))}
-          </div>
-          <button className="primary" disabled={drawDisabled} onClick={handleDraw}>{drawLabel}</button>
-          <p className={"status" + (status.err ? " err" : "")}>{status.msg}</p>
+          </ul>
         </section>
+      )}
 
-        {/* Step 2: result */}
-        <section className="card" hidden={view !== "result"}>
-          <div className="tag-stage">
-            <div className={"tag-swing" + (idle ? " idle" : "")}>
-              <div
-                key={landKey}
-                ref={tagRef}
-                className={"tag" + (spinning ? " spinning" : "") + (landKey > 0 ? " landed" : "")}
-              >
-                <div className="from">{tagFrom}</div>
-                <div className="to-label">You're Secret Santa for</div>
-                <div className="to">{tagTo}</div>
-              </div>
-            </div>
-          </div>
-          <p className="hint" hidden={!keepVisible}>
-            Keep it to yourself until 17 December. If you forget, come back and pick your name again to see the same person.
+      {step === "confirm" && selected && (
+        <section className="panel" aria-labelledby="confirm-title">
+          <h2 id="confirm-title">Hi, {firstName(selected)}</h2>
+          <p className="muted">
+            {drawn.has(selected)
+              ? "You've already drawn. Tap below to see your person again."
+              : "Ready? You'll draw one colleague. Once drawn, it's locked."}
           </p>
-
-          <div className="reminder">
-            <h3>Go easy on your pocket</h3>
-            <p>The economy is tough right now, so please don't break the bank. A small, thoughtful gift means more than an expensive one, and nobody is comparing prices.</p>
-            <ul>
-              <li>A snack or drink you know they love</li>
-              <li>Something useful for their desk</li>
-              <li>A handwritten note goes a long way</li>
-            </ul>
-          </div>
-          <button className="ghost" onClick={handleBack}>Done, back to the list</button>
+          <button className="btn" onClick={draw} disabled={busy || !connected}>
+            {busy ? "Drawing…" : drawn.has(selected) ? "Show my person" : "Draw my person"}
+          </button>
+          {error && <p className="error" role="alert">{error}</p>}
+          <button className="link" onClick={reset}>Not {firstName(selected)}? Choose again</button>
         </section>
+      )}
 
-        <section className="progress" aria-live="polite">
-          <div className="eyebrow">{progressLabel}</div>
-          <div className="dots">
-            {PEOPLE.map((p, i) => {
-              const on = i < drawn.size;
-              const pop = on && i >= popFrom;
-              return <span key={p.id} className={"dot" + (on ? " on" : "") + (pop ? " pop" : "")} />;
-            })}
+      {step === "result" && selected && (
+        <section className="panel" aria-live="polite">
+          <div className="result">
+            <p className="label">You're Secret Santa for</p>
+            <p className={"match" + (spinning ? " spinning" : "") + (revealed ? " revealed" : "")}>
+              {match || "…"}
+            </p>
           </div>
+          {revealed && (
+            <>
+              <p className="muted">
+                Keep it to yourself until 17 December. Forgot? Pick your name again to see the same person.
+              </p>
+              <div className="note">
+                <p className="note-title">Keep it simple</p>
+                <p>
+                  Money is tight for many people right now. A small, thoughtful gift beats an expensive one. A snack
+                  they love, something for their desk, or a handwritten note is perfect.
+                </p>
+              </div>
+              <button className="btn btn-outline" onClick={reset}>Done</button>
+            </>
+          )}
         </section>
+      )}
 
-        <footer>Everyone draws one colleague, never themselves. Once you've drawn, your match is locked.</footer>
-      </div>
-    </>
+      <section className="progress" aria-live="polite">
+        <div className="progress-row">
+          <span>{progressText}</span>
+          {connected && <span>{pct}%</span>}
+        </div>
+        <div className="bar" role="progressbar" aria-valuemin={0} aria-valuemax={PEOPLE.length} aria-valuenow={drawn.size}>
+          <div className="bar-fill" style={{ width: `${pct}%` }} />
+        </div>
+      </section>
+
+      <footer className="foot">Everyone draws one colleague, never themselves.</footer>
+    </main>
   );
 }
