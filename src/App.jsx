@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { PEOPLE, byId, EXCHANGE, firstName } from "./people";
-import { connectDb } from "./db";
-import { getPairs, sleep } from "./draw";
+import { subscribeDrawn, getPairs, markDrawn } from "./db";
+import { sleep } from "./draw";
 import { reduceMotion } from "./motion";
 import Snow from "./components/Snow";
 import Confetti from "./components/Confetti";
@@ -17,8 +17,7 @@ function countdownText() {
 }
 
 export default function App() {
-  const [db, setDb] = useState(null);
-  const [dbFailed, setDbFailed] = useState(false);
+  const [connected, setConnected] = useState(false);
   const [drawn, setDrawn] = useState(() => new Set());
   const [selected, setSelected] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -42,39 +41,28 @@ export default function App() {
   const confettiRef = useRef(null);
   const runId = useRef(0);
 
-  // Connect to the database and subscribe to who has drawn.
+  // Subscribe to who has drawn.
   useEffect(() => {
-    let unsub, timer, cancelled = false;
-    (async () => {
-      let conn = null;
-      try { conn = await connectDb(); } catch { conn = null; }
-      if (cancelled) return;
-      if (!conn) {
-        setDbFailed(true);
-        setProgressLabel("Draws unavailable");
+    let loaded = false;
+    const timer = setTimeout(() => { if (!loaded) setProgressLabel("Still connecting to the draw…"); }, 10000);
+    const unsub = subscribeDrawn(
+      (raw) => {
+        const next = new Set([...raw].filter((id) => byId[id]));
+        loaded = true;
+        clearTimeout(timer);
+        setConnected(true);
+        setPopFrom(prevCount.current > 0 ? prevCount.current : next.size);
+        prevCount.current = next.size;
+        setDrawn(next);
+        setProgressLabel(`${next.size} of ${PEOPLE.length} have drawn`);
+      },
+      () => {
+        clearTimeout(timer);
+        setProgressLabel("Couldn't load who has drawn");
         setStatus({ msg: "Couldn't connect to the draw. Refresh the page to try again.", err: true });
-        return;
       }
-      setDb(conn);
-      let loaded = false;
-      timer = setTimeout(() => { if (!loaded) setProgressLabel("Still connecting to the draw…"); }, 10000);
-      unsub = conn.collection("drawn").onSnapshot(
-        (snap) => {
-          const next = new Set(snap.docs.filter((d) => byId[d.id]).map((d) => d.id));
-          if (!snap.metadata?.fromCache) { loaded = true; clearTimeout(timer); }
-          setPopFrom(prevCount.current > 0 ? prevCount.current : next.size);
-          prevCount.current = next.size;
-          setDrawn(next);
-          setProgressLabel(`${next.size} of ${PEOPLE.length} have drawn`);
-        },
-        () => { clearTimeout(timer); setProgressLabel("Couldn't load who has drawn"); }
-      );
-    })();
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-      if (typeof unsub === "function") unsub();
-    };
+    );
+    return () => { clearTimeout(timer); unsub(); };
   }, []);
 
   async function shuffleTo(finalName, run) {
@@ -98,14 +86,14 @@ export default function App() {
   }
 
   async function handleDraw() {
-    if (!selected || busy || !db) return;
+    if (!selected || busy || !connected) return;
     const run = ++runId.current;
     setBusy(true);
     setStatus({ msg: "Drawing…", err: false });
     const me = byId[selected];
     const again = drawn.has(selected);
     try {
-      const pairs = await getPairs(db);
+      const pairs = await getPairs();
       const match = byId[pairs[me.id]];
       setTagFrom(`To ${firstName(me.id)},`);
       setTagTo("…");
@@ -113,7 +101,7 @@ export default function App() {
       setView("result");
       setStatus({ msg: "", err: false });
       if (!again) {
-        try { await db.doc("drawn/" + me.id).set({ at: new Date().toISOString() }); } catch { /* non-fatal */ }
+        try { await markDrawn(me.id); } catch { /* already marked, or offline: non-fatal */ }
         await shuffleTo(match.name, run);
       } else {
         setTagTo(match.name);
@@ -149,7 +137,7 @@ export default function App() {
     const first = firstName(selected);
     drawLabel = drawn.has(selected) ? `Show my match again, ${first}` : `I'm ${first}, draw my person`;
   }
-  const drawDisabled = !selected || busy || !db || dbFailed;
+  const drawDisabled = !selected || busy || !connected;
 
   return (
     <>

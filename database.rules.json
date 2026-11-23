@@ -1,0 +1,27 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "santa": {
+      ".read": true,
+      "pairs": {
+        ".write": "!data.exists()",
+        ".validate": "newData.hasChildren(['amina-nakato','brian-okello','catherine-achieng','david-mugisha','esther-namubiru','francis-ssemwogerere','grace-atim','henry-kato','irene-nabirye','joseph-wasswa','kevin-tumusiime','lydia-nansubuga'])",
+        "$giver": {
+          ".validate": "$giver.matches(/^(amina-nakato|brian-okello|catherine-achieng|david-mugisha|esther-namubiru|francis-ssemwogerere|grace-atim|henry-kato|irene-nabirye|joseph-wasswa|kevin-tumusiime|lydia-nansubuga)$/) && newData.isString() && newData.val().matches(/^(amina-nakato|brian-okello|catherine-achieng|david-mugisha|esther-namubiru|francis-ssemwogerere|grace-atim|henry-kato|irene-nabirye|joseph-wasswa|kevin-tumusiime|lydia-nansubuga)$/) && newData.val() !== $giver"
+        }
+      },
+      "createdAt": {
+        ".write": "!data.exists()",
+        ".validate": "newData.isString()"
+      }
+    },
+    "drawn": {
+      ".read": true,
+      "$id": {
+        ".write": "!data.exists() && root.child('santa/pairs').exists()",
+        ".validate": "$id.matches(/^(amina-nakato|brian-okello|catherine-achieng|david-mugisha|esther-namubiru|francis-ssemwogerere|grace-atim|henry-kato|irene-nabirye|joseph-wasswa|kevin-tumusiime|lydia-nansubuga)$/) && newData.hasChildren(['at']) && newData.child('at').isString()"
+      }
+    }
+  }
+}
