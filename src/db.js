@@ -1,41 +1,55 @@
-// Firebase Realtime Database access. No sign-in: security rules in database.rules.json
-// keep writes to "create once" so nobody can overwrite the pairs or un-draw someone.
+// Firebase Realtime Database access. No sign-in.
 //
-// Layout:
-//   santa/pairs/{giverId} = receiverId
-//   santa/createdAt       = ISO string
-//   drawn/{personId}      = { at: ISO string }
-import { ref, onValue, runTransaction, set, get } from "firebase/database";
+// Layout (who got whom is NEVER stored; it only lives on the drawer's device):
+//   people/{personId}     = "Full Name"   (added by the organiser)
+//   draw/drawn/{personId} = true          (this person has drawn)
+//   draw/taken/{personId} = true          (this person has been picked by someone)
+//   draw/version          = number        (bumped on every draw so simultaneous draws can't clash)
+import { ref, onValue, get, update } from "firebase/database";
 import { database } from "./firebase";
-import { makeLoop, validPairs } from "./draw";
+import { pickReceiver, sleep } from "./draw";
+import { parsePeople } from "./people";
 
-// Calls onChange(Set<id>) whenever someone draws. Returns an unsubscribe function.
-export function subscribeDrawn(onChange, onError) {
+const keys = (obj) => new Set(Object.keys(obj || {}));
+
+export function subscribePeople(onChange, onError) {
+  return onValue(ref(database, "people"), (snap) => onChange(parsePeople(snap.val())), onError);
+}
+
+// Calls onChange({ drawn: Set, taken: Set }) on every change.
+export function subscribeDraw(onChange, onError) {
   return onValue(
-    ref(database, "drawn"),
-    (snap) => onChange(new Set(Object.keys(snap.val() || {}))),
+    ref(database, "draw"),
+    (snap) => {
+      const v = snap.val() || {};
+      onChange({ drawn: keys(v.drawn), taken: keys(v.taken) });
+    },
     onError
   );
 }
 
-// Returns the shared pairs, creating them atomically the first time anyone draws.
-export async function getPairs() {
-  const pairsRef = ref(database, "santa/pairs");
-  const existing = validPairs((await get(pairsRef)).val());
-  if (existing) return existing;
-
-  const result = await runTransaction(pairsRef, (current) => {
-    if (validPairs(current)) return; // someone beat us to it: abort and use theirs
-    return makeLoop();
-  });
-  const pairs = validPairs(result.snapshot.val());
-  if (!pairs) throw new Error("busy");
-  if (result.committed) {
-    try { await set(ref(database, "santa/createdAt"), new Date().toISOString()); } catch { /* optional */ }
+// Draws a receiver for `me` and records it anonymously. Returns the receiver's id.
+export async function drawPerson(me, people) {
+  if (people.length < 2) throw new Error("too-few");
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const v = (await get(ref(database, "draw"))).val() || {};
+    const drawn = keys(v.drawn), taken = keys(v.taken);
+    if (drawn.has(me)) throw new Error("already");
+    const receiver = pickReceiver(me, people, drawn, taken);
+    if (!receiver) throw new Error("stuck");
+    try {
+      // All three writes succeed together or not at all. The rules reject the write if the
+      // version moved on (someone else drew meanwhile) or if the receiver was already taken.
+      await update(ref(database, "draw"), {
+        version: (v.version || 0) + 1,
+        [`drawn/${me}`]: true,
+        [`taken/${receiver}`]: true,
+      });
+      return receiver;
+    } catch (e) {
+      if (!String(e?.code || e?.message).toLowerCase().includes("permission")) throw e;
+      await sleep(300 + Math.random() * 700); // someone drew at the same moment: retry with fresh data
+    }
   }
-  return pairs;
-}
-
-export async function markDrawn(id) {
-  await set(ref(database, "drawn/" + id), { at: new Date().toISOString() });
+  throw new Error("busy");
 }

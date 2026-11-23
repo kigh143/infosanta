@@ -1,25 +1,18 @@
-import { PEOPLE, byId } from "./people";
-
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// One loop through everyone (Sattolo's algorithm): nobody gets themselves and no two people swap.
-export function makeLoop() {
-  const ids = PEOPLE.map((p) => p.id);
-  for (let i = ids.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * i);
-    [ids[i], ids[j]] = [ids[j], ids[i]];
-  }
-  const pairs = {};
-  ids.forEach((id, i) => { pairs[id] = ids[(i + 1) % ids.length]; });
-  return pairs;
-}
+// Picks a receiver for `me` from the names nobody has been given yet.
+// Never picks yourself, and never leaves the last person with only their own name.
+export function pickReceiver(me, people, drawn, taken) {
+  const ids = people.map((p) => p.id);
+  const receivers = ids.filter((id) => !taken.has(id));
+  const giversAfter = ids.filter((id) => !drawn.has(id) && id !== me);
 
-// Returns the pairs object if it covers everyone correctly, otherwise null.
-export function validPairs(p) {
-  if (!p || typeof p !== "object") return null;
-  for (const person of PEOPLE) {
-    const r = p[person.id];
-    if (!r || !byId[r] || r === person.id) return null;
-  }
-  return p;
+  const candidates = receivers.filter((c) => {
+    if (c === me) return false;
+    if (giversAfter.length !== 1) return true;
+    const last = giversAfter[0];
+    return receivers.some((r) => r !== c && r !== last); // the last giver must still have someone
+  });
+  if (!candidates.length) return null;
+  return candidates[Math.floor(Math.random() * candidates.length)];
 }

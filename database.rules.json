@@ -2,25 +2,30 @@
   "rules": {
     ".read": false,
     ".write": false,
-    "santa": {
+    "people": {
       ".read": true,
-      "pairs": {
-        ".write": "!data.exists()",
-        ".validate": "newData.hasChildren(['amina-nakato','brian-okello','catherine-achieng','david-mugisha','esther-namubiru','francis-ssemwogerere','grace-atim','henry-kato','irene-nabirye','joseph-wasswa','kevin-tumusiime','lydia-nansubuga'])",
-        "$giver": {
-          ".validate": "$giver.matches(/^(amina-nakato|brian-okello|catherine-achieng|david-mugisha|esther-namubiru|francis-ssemwogerere|grace-atim|henry-kato|irene-nabirye|joseph-wasswa|kevin-tumusiime|lydia-nansubuga)$/) && newData.isString() && newData.val().matches(/^(amina-nakato|brian-okello|catherine-achieng|david-mugisha|esther-namubiru|francis-ssemwogerere|grace-atim|henry-kato|irene-nabirye|joseph-wasswa|kevin-tumusiime|lydia-nansubuga)$/) && newData.val() !== $giver"
+      ".write": false
+    },
+    "draw": {
+      ".read": true,
+      "version": {
+        ".write": "newData.exists()",
+        ".validate": "newData.isNumber() && ((!data.exists() && newData.val() === 1) || (data.exists() && newData.val() === data.val() + 1))"
+      },
+      "drawn": {
+        "$id": {
+          ".write": "!data.exists() && newData.exists()",
+          ".validate": "newData.val() === true && root.child('people/' + $id).exists() && ((!root.child('draw/version').exists() && newData.parent().parent().child('version').val() === 1) || newData.parent().parent().child('version').val() === root.child('draw/version').val() + 1)"
         }
       },
-      "createdAt": {
-        ".write": "!data.exists()",
-        ".validate": "newData.isString()"
-      }
-    },
-    "drawn": {
-      ".read": true,
-      "$id": {
-        ".write": "!data.exists() && root.child('santa/pairs').exists()",
-        ".validate": "$id.matches(/^(amina-nakato|brian-okello|catherine-achieng|david-mugisha|esther-namubiru|francis-ssemwogerere|grace-atim|henry-kato|irene-nabirye|joseph-wasswa|kevin-tumusiime|lydia-nansubuga)$/) && newData.hasChildren(['at']) && newData.child('at').isString()"
+      "taken": {
+        "$id": {
+          ".write": "!data.exists() && newData.exists()",
+          ".validate": "newData.val() === true && root.child('people/' + $id).exists() && ((!root.child('draw/version').exists() && newData.parent().parent().child('version').val() === 1) || newData.parent().parent().child('version').val() === root.child('draw/version').val() + 1)"
+        }
+      },
+      "$other": {
+        ".validate": false
       }
     }
   }

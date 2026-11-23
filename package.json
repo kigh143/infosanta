@@ -7,10 +7,14 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "deploy": "firebase deploy --only hosting,database"
+    "deploy": "firebase deploy --only hosting,database",
+    "people:upload": "firebase database:set /people people.json",
+    "draw:reset": "firebase database:remove -f /draw && firebase database:remove -f /drawn && firebase database:remove -f /santa",
+    "rules:deploy": "firebase deploy --only database"
   },
   "dependencies": {
     "firebase": "^13.4.0",
+    "lottie-web": "^5.13.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },
